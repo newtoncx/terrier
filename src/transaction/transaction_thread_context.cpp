@@ -19,13 +19,17 @@ void TransactionThreadContext::RemoveRunningTxn(TransactionContext *const txn) {
 timestamp_t TransactionThreadContext::OldestTransactionStartTime() {
   common::SpinLatch::ScopedSpinLatch guard(&curr_running_txns_latch_);
   const auto &oldest_txn = std::min_element(curr_running_txns_.cbegin(), curr_running_txns_.cend());
-  const timestamp_t result = (oldest_txn != curr_running_txns_.end()) ? *oldest_txn : time_.load();
+  const timestamp_t result = (oldest_txn != curr_running_txns_.end()) ? *oldest_txn : timestamp_t(-1);
   return result;
 }
 
 TransactionQueue TransactionThreadContext::CompletedTransactions() {
   common::SpinLatch::ScopedSpinLatch guard(&curr_running_txns_latch_);
-  TransactionQueue hand_to_gc(std::move(completed_txns_));
+  TransactionQueue hand_to_gc;
+  while (!completed_txns_.empty()) {
+    hand_to_gc.push_front(completed_txns_.front());
+    completed_txns_.pop_front();
+  }
   TERRIER_ASSERT(completed_txns_.empty(), "TransactionManager's queue should now be empty.");
   return hand_to_gc;
 }

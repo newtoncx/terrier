@@ -1,6 +1,7 @@
 #include "transaction/transaction_manager.h"
 #include <algorithm>
 #include <utility>
+#include "loggers/main_logger.h"
 
 namespace terrier::transaction {
 TransactionThreadContext *TransactionManager::RegisterWorker(worker_id_t worker_id) {
@@ -161,7 +162,7 @@ timestamp_t TransactionManager::OldestTransactionStartTime() const {
   for (auto worker : registered_workers_) {
     TransactionThreadContext *thread_context = worker.second;
     timestamp_t oldest_txn = thread_context->OldestTransactionStartTime();
-    result = std::min(result, oldest_txn);
+    result = oldest_txn == timestamp_t(-1) ? result : std::min(result, oldest_txn);
   }
   return result;
 }
