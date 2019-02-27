@@ -1,5 +1,7 @@
-#include "transaction/transaction_context.h"
 #include "transaction/transaction_thread_context.h"
+#include <algorithm>
+#include <utility>
+#include "transaction/transaction_context.h"
 
 namespace terrier::transaction {
 void TransactionThreadContext::AddRunningTxn(timestamp_t start_time) {

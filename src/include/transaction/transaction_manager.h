@@ -1,4 +1,5 @@
 #pragma once
+#include <map>
 #include <unordered_set>
 #include <utility>
 #include "common/shared_latch.h"
@@ -10,7 +11,6 @@
 #include "storage/write_ahead_log/log_manager.h"
 #include "transaction/transaction_context.h"
 #include "transaction/transaction_defs.h"
-#include "transaction/transaction_thread_context.h"
 
 namespace terrier::transaction {
 /**
@@ -39,13 +39,7 @@ class TransactionManager {
    * @param worker_id  id of the worker thread to be registered
    * @return a constructed TransactionThreadContext with the given id
    */
-  TransactionThreadContext *RegisterWorker(worker_id_t worker_id) {
-    TransactionThreadContext *thread_context = new TransactionThreadContext(worker_id, gc_enabled_);
-
-    common::SpinLatch::ScopedSpinLatch guard(&registered_workers_latch_);
-    registered_workers_[worker_id] = thread_context;
-    return thread_context;
-  }
+  TransactionThreadContext *RegisterWorker(worker_id_t worker_id);
 
   /**
    * Deregisters a worker to the transaction manager so that we no longer expect transactions to begin
@@ -53,10 +47,7 @@ class TransactionManager {
    *
    * @param thread context of the thread to unregister
    */
-  void UnregisterWorker(TransactionThreadContext *thread) {
-    common::SpinLatch::ScopedSpinLatch guard(&registered_workers_latch_);
-    registered_workers_.erase(thread->GetWorkerId());
-  }
+  void UnregisterWorker(TransactionThreadContext *thread);
 
   /**
    * Begins a transaction.

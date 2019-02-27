@@ -26,7 +26,7 @@ class TransactionThreadContext {
 
   void AddRunningTxn(timestamp_t start_time);
 
-  void RemoveRunningTxn(TransactionContext *const txn);
+  void RemoveRunningTxn(TransactionContext *txn);
 
   timestamp_t OldestTransactionStartTime();
 

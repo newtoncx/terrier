@@ -3,6 +3,22 @@
 #include <utility>
 
 namespace terrier::transaction {
+TransactionThreadContext *TransactionManager::RegisterWorker(worker_id_t worker_id) {
+  auto thread_context = new TransactionThreadContext(worker_id, gc_enabled_);
+
+  common::SpinLatch::ScopedSpinLatch guard(&registered_workers_latch_);
+  registered_workers_[worker_id] = thread_context;
+  return thread_context;
+}
+
+void TransactionManager::UnregisterWorker(TransactionThreadContext *thread) {
+  for (auto txn : thread->CompletedTransactions()) {
+    completed_txns_.push_front(txn);
+  }
+  common::SpinLatch::ScopedSpinLatch guard(&registered_workers_latch_);
+  registered_workers_.erase(thread->GetWorkerId());
+}
+
 TransactionContext *TransactionManager::BeginTransaction(TransactionThreadContext *thread_context) {
   // This latch has to also protect addition of this transaction to the running transaction table. Otherwise,
   // the thread might get scheduled out while other transactions commit, and the GC will deallocate their version
@@ -152,7 +168,7 @@ timestamp_t TransactionManager::OldestTransactionStartTime() const {
 
 TransactionQueue TransactionManager::CompletedTransactionsForGC() {
   common::SpinLatch::ScopedSpinLatch guard(&registered_workers_latch_);
-  TransactionQueue hand_to_gc;
+  TransactionQueue hand_to_gc(std::move(completed_txns_));
   for (auto worker : registered_workers_) {
     TransactionThreadContext *thread_context = worker.second;
     for (auto txn : thread_context->CompletedTransactions()) {
