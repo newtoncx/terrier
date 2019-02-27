@@ -28,7 +28,7 @@ class TransactionThreadContext {
 
   void RemoveRunningTxn(TransactionContext *txn);
 
-  timestamp_t OldestTransactionStartTime();
+  timestamp_t OldestTransactionStartTime(timestamp_t curr_time);
 
   TransactionQueue CompletedTransactions();
 

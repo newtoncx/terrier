@@ -16,10 +16,10 @@ void TransactionThreadContext::RemoveRunningTxn(TransactionContext *const txn) {
   if (gc_enabled_) completed_txns_.push_front(txn);
 }
 
-timestamp_t TransactionThreadContext::OldestTransactionStartTime() {
+timestamp_t TransactionThreadContext::OldestTransactionStartTime(timestamp_t curr_time) {
   common::SpinLatch::ScopedSpinLatch guard(&curr_running_txns_latch_);
   const auto &oldest_txn = std::min_element(curr_running_txns_.cbegin(), curr_running_txns_.cend());
-  const timestamp_t result = (oldest_txn != curr_running_txns_.end()) ? *oldest_txn : timestamp_t(-1);
+  const timestamp_t result = (oldest_txn != curr_running_txns_.end()) ? *oldest_txn : curr_time;
   return result;
 }
 

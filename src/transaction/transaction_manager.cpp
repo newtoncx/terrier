@@ -189,15 +189,17 @@ void TransactionManager::GCLastUpdateOnAbort(TransactionContext *const txn) {
 }
 
 timestamp_t TransactionManager::OldestTransactionStartTime() const {
+  timestamp_t curr_time = time_.load();
+
   common::SpinLatch::ScopedSpinLatch running_guard(&curr_running_txns_latch_);
   const auto &oldest_txn = std::min_element(curr_running_txns_.cbegin(), curr_running_txns_.cend());
-  timestamp_t result = (oldest_txn != curr_running_txns_.end()) ? *oldest_txn : time_.load();
+  timestamp_t result = (oldest_txn != curr_running_txns_.end()) ? *oldest_txn : curr_time;
 
   common::SpinLatch::ScopedSpinLatch guard(&registered_workers_latch_);
   for (auto worker : registered_workers_) {
     TransactionThreadContext *thread_context = worker.second;
-    timestamp_t oldest_txn = thread_context->OldestTransactionStartTime();
-    result = oldest_txn == timestamp_t(-1) ? result : std::min(result, oldest_txn);
+    timestamp_t oldest_txn = thread_context->OldestTransactionStartTime(curr_time);
+    result = std::min(result, oldest_txn);
   }
   return result;
 }
