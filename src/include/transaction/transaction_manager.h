@@ -105,8 +105,8 @@ class TransactionManager {
   common::SharedLatch commit_latch_;
 
   // TODO(Matt): consider a different data structure if this becomes a measured bottleneck
-  // std::unordered_set<timestamp_t> curr_running_txns_;
-  // mutable common::SpinLatch curr_running_txns_latch_;
+  std::unordered_set<timestamp_t> curr_running_txns_;
+  mutable common::SpinLatch curr_running_txns_latch_;
 
   // TODO(ncx): new
   std::map<worker_id_t, TransactionThreadContext *> registered_workers_;

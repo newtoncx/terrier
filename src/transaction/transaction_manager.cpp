@@ -13,6 +13,7 @@ TransactionThreadContext *TransactionManager::RegisterWorker(worker_id_t worker_
 }
 
 void TransactionManager::UnregisterWorker(TransactionThreadContext *thread) {
+  common::SpinLatch::ScopedSpinLatch running_guard(&curr_running_txns_latch_);
   for (auto txn : thread->CompletedTransactions()) {
     completed_txns_.push_front(txn);
   }
@@ -34,7 +35,13 @@ TransactionContext *TransactionManager::BeginTransaction(TransactionThreadContex
   // (That is, they may change as concurrent inserts and deletes happen)
   auto *const result =
       new TransactionContext(start_time, start_time + INT64_MIN, buffer_pool_, log_manager_, thread_context);
-  thread_context->AddRunningTxn(result->StartTime());
+
+  if (thread_context != nullptr) {
+    thread_context->AddRunningTxn(result->StartTime());
+  } else {
+    common::SpinLatch::ScopedSpinLatch running_guard(&curr_running_txns_latch_);
+    curr_running_txns_.emplace(result->StartTime());
+  }
   return result;
 }
 
@@ -104,7 +111,19 @@ timestamp_t TransactionManager::Commit(TransactionContext *const txn, transactio
                                                        : UpdatingCommitCriticalSection(txn, callback, callback_arg);
 
   TransactionThreadContext *thread_context = txn->GetThreadContext();
-  thread_context->RemoveRunningTxn(txn);
+  if (thread_context != nullptr) {
+    thread_context->RemoveRunningTxn(txn);
+  } else {
+    // In a critical section, remove this transaction from the table of running transactions
+    common::SpinLatch::ScopedSpinLatch running_guard(&curr_running_txns_latch_);
+    const timestamp_t start_time = txn->StartTime();
+    const size_t ret UNUSED_ATTRIBUTE = curr_running_txns_.erase(start_time);
+    TERRIER_ASSERT(ret == 1, "Committed transaction did not exist in global transactions table");
+    // It is not necessary to have to GC process read-only transactions, but it's probably faster to call free off
+    // the critical path there anyway
+    // Also note here that GC will figure out what varlen entries to GC, as opposed to in the abort case.
+    if (gc_enabled_) completed_txns_.push_front(txn);
+  }
   return result;
 }
 
@@ -119,7 +138,16 @@ void TransactionManager::Abort(TransactionContext *const txn) {
   txn->log_processed_ = true;
 
   TransactionThreadContext *thread_context = txn->GetThreadContext();
-  thread_context->RemoveRunningTxn(txn);
+  if (thread_context != nullptr) {
+    thread_context->RemoveRunningTxn(txn);
+  } else {
+    // In a critical section, remove this transaction from the table of running transactions
+    common::SpinLatch::ScopedSpinLatch running_guard(&curr_running_txns_latch_);
+    const timestamp_t start_time = txn->StartTime();
+    const size_t ret UNUSED_ATTRIBUTE = curr_running_txns_.erase(start_time);
+    TERRIER_ASSERT(ret == 1, "Aborted transaction did not exist in global transactions table");
+    if (gc_enabled_) completed_txns_.push_front(txn);
+  }
 }
 
 void TransactionManager::GCLastUpdateOnAbort(TransactionContext *const txn) {
@@ -157,8 +185,11 @@ void TransactionManager::GCLastUpdateOnAbort(TransactionContext *const txn) {
 }
 
 timestamp_t TransactionManager::OldestTransactionStartTime() const {
+  common::SpinLatch::ScopedSpinLatch running_guard(&curr_running_txns_latch_);
+  const auto &oldest_txn = std::min_element(curr_running_txns_.cbegin(), curr_running_txns_.cend());
+  timestamp_t result = (oldest_txn != curr_running_txns_.end()) ? *oldest_txn : time_.load();
+
   common::SpinLatch::ScopedSpinLatch guard(&registered_workers_latch_);
-  timestamp_t result = time_.load();
   for (auto worker : registered_workers_) {
     TransactionThreadContext *thread_context = worker.second;
     timestamp_t oldest_txn = thread_context->OldestTransactionStartTime();
@@ -168,8 +199,10 @@ timestamp_t TransactionManager::OldestTransactionStartTime() const {
 }
 
 TransactionQueue TransactionManager::CompletedTransactionsForGC() {
-  common::SpinLatch::ScopedSpinLatch guard(&registered_workers_latch_);
+  common::SpinLatch::ScopedSpinLatch running_guard(&curr_running_txns_latch_);
   TransactionQueue hand_to_gc(std::move(completed_txns_));
+
+  common::SpinLatch::ScopedSpinLatch guard(&registered_workers_latch_);
   for (auto worker : registered_workers_) {
     TransactionThreadContext *thread_context = worker.second;
     for (auto txn : thread_context->CompletedTransactions()) {
