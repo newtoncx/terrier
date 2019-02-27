@@ -10,6 +10,7 @@
 #include "storage/write_ahead_log/log_manager.h"
 #include "transaction/transaction_context.h"
 #include "transaction/transaction_defs.h"
+#include "transaction/transaction_thread_context.h"
 
 namespace terrier::transaction {
 /**
@@ -39,8 +40,11 @@ class TransactionManager {
    * @return a constructed TransactionThreadContext with the given id
    */
   TransactionThreadContext *RegisterWorker(worker_id_t worker_id) {
-    // TODO(Tianyu): Implement
-    return nullptr;
+    TransactionThreadContext *thread_context = new TransactionThreadContext(worker_id, gc_enabled_);
+
+    common::SpinLatch::ScopedSpinLatch guard(&registered_workers_latch_);
+    registered_workers_[worker_id] = thread_context;
+    return thread_context;
   }
 
   /**
@@ -50,8 +54,10 @@ class TransactionManager {
    * @param thread context of the thread to unregister
    */
   void UnregisterWorker(TransactionThreadContext *thread) {
-    // TODO(Tianyu): Implement
+    common::SpinLatch::ScopedSpinLatch guard(&registered_workers_latch_);
+    registered_workers_.erase(thread->GetWorkerId());
   }
+
   /**
    * Begins a transaction.
    * @param thread_context context for the calling thread
@@ -108,8 +114,12 @@ class TransactionManager {
   common::SharedLatch commit_latch_;
 
   // TODO(Matt): consider a different data structure if this becomes a measured bottleneck
-  std::unordered_set<timestamp_t> curr_running_txns_;
-  mutable common::SpinLatch curr_running_txns_latch_;
+  // std::unordered_set<timestamp_t> curr_running_txns_;
+  // mutable common::SpinLatch curr_running_txns_latch_;
+
+  // TODO(ncx): new
+  std::map<worker_id_t, TransactionThreadContext *> registered_workers_;
+  mutable common::SpinLatch registered_workers_latch_;
 
   bool gc_enabled_ = false;
   TransactionQueue completed_txns_;

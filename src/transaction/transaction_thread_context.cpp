@@ -1,3 +1,29 @@
 #include "transaction/transaction_thread_context.h"
 
-namespace terrier::transaction {}  // namespace terrier::transaction
+namespace terrier::transaction {
+void TransactionThreadContext::AddRunningTxn(timestamp_t start_time) {
+  common::SpinLatch::ScopedSpinLatch guard(&curr_running_txns_latch_);
+  curr_running_txns_.emplace(start_time);
+}
+
+void TransactionThreadContext::RemoveRunningTxn(TransactionContext *const txn) {
+  common::SpinLatch::ScopedSpinLatch guard(&curr_running_txns_latch_);
+  const size_t ret UNUSED_ATTRIBUTE = curr_running_txns_.erase(txn->StartTime());
+  TERRIER_ASSERT(ret == 1, "Transaction did not exist in global transactions table");
+  if (gc_enabled_) completed_txns_.push_front(txn);
+}
+
+timestamp_t TransactionThreadContext::OldestTransactionStartTime() {
+  common::SpinLatch::ScopedSpinLatch guard(&curr_running_txns_latch_);
+  const auto &oldest_txn = std::min_element(curr_running_txns_.cbegin(), curr_running_txns_.cend());
+  const timestamp_t result = (oldest_txn != curr_running_txns_.end()) ? *oldest_txn : time_.load();
+  return result;
+}
+
+TransactionQueue TransactionThreadContext::CompletedTransactions() {
+  common::SpinLatch::ScopedSpinLatch guard(&curr_running_txns_latch_);
+  TransactionQueue hand_to_gc(std::move(completed_txns_));
+  TERRIER_ASSERT(completed_txns_.empty(), "TransactionManager's queue should now be empty.");
+  return hand_to_gc;
+}
+}  // namespace terrier::transaction
