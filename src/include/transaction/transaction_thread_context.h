@@ -2,7 +2,6 @@
 #include <unordered_set>
 #include <utility>
 #include "common/spin_latch.h"
-#include "transaction/transaction_context.h"
 #include "transaction/transaction_defs.h"
 
 namespace terrier::transaction {
