@@ -17,8 +17,12 @@ void TransactionManager::UnregisterWorker(TransactionThreadContext *thread) {
   for (auto txn : thread->CompletedTransactions()) {
     completed_txns_.push_front(txn);
   }
+
   common::SpinLatch::ScopedSpinLatch guard(&registered_workers_latch_);
-  registered_workers_.erase(thread->GetWorkerId());
+  auto worker_id = thread->GetWorkerId();
+  TransactionThreadContext *thread_context = registered_workers_[worker_id];
+  delete thread_context;
+  registered_workers_.erase(worker_id);
 }
 
 TransactionContext *TransactionManager::BeginTransaction(TransactionThreadContext *thread_context) {
