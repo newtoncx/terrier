@@ -1,7 +1,6 @@
 #include "transaction/transaction_manager.h"
 #include <algorithm>
 #include <utility>
-#include "loggers/main_logger.h"
 
 namespace terrier::transaction {
 TransactionThreadContext *TransactionManager::RegisterWorker(worker_id_t worker_id) {
@@ -14,6 +13,8 @@ TransactionThreadContext *TransactionManager::RegisterWorker(worker_id_t worker_
 
 void TransactionManager::UnregisterWorker(TransactionThreadContext *thread) {
   common::SpinLatch::ScopedSpinLatch running_guard(&curr_running_txns_latch_);
+  // If there are leftover completed transactions, we must track them in the manager so that we can
+  // delete the worker thread's context.
   for (auto txn : thread->CompletedTransactions()) {
     completed_txns_.push_front(txn);
   }
@@ -41,8 +42,10 @@ TransactionContext *TransactionManager::BeginTransaction(TransactionThreadContex
       new TransactionContext(start_time, start_time + INT64_MIN, buffer_pool_, log_manager_, thread_context);
 
   if (thread_context != nullptr) {
+    // Track new running transaction in its thread's context.
     thread_context->AddRunningTxn(result->StartTime());
   } else {
+    // The manager still keeps a list for running transactions initiated without a thread context.
     common::SpinLatch::ScopedSpinLatch running_guard(&curr_running_txns_latch_);
     curr_running_txns_.emplace(result->StartTime());
   }
@@ -192,10 +195,12 @@ timestamp_t TransactionManager::OldestTransactionStartTime() const {
   timestamp_t curr_time = time_.load();
 
   common::SpinLatch::ScopedSpinLatch running_guard(&curr_running_txns_latch_);
+  // First consider transactions tracked in the manager without a thread context.
   const auto &oldest_txn = std::min_element(curr_running_txns_.cbegin(), curr_running_txns_.cend());
   timestamp_t result = (oldest_txn != curr_running_txns_.end()) ? *oldest_txn : curr_time;
 
   common::SpinLatch::ScopedSpinLatch guard(&registered_workers_latch_);
+  // Then compare with all transactions tracked in their thread contexts.
   for (auto worker : registered_workers_) {
     TransactionThreadContext *thread_context = worker.second;
     timestamp_t oldest_txn = thread_context->OldestTransactionStartTime(curr_time);
@@ -206,9 +211,11 @@ timestamp_t TransactionManager::OldestTransactionStartTime() const {
 
 TransactionQueue TransactionManager::CompletedTransactionsForGC() {
   common::SpinLatch::ScopedSpinLatch running_guard(&curr_running_txns_latch_);
+  // First deal with any completed transactions being kept by the manager.
   TransactionQueue hand_to_gc(std::move(completed_txns_));
 
   common::SpinLatch::ScopedSpinLatch guard(&registered_workers_latch_);
+  // Then clear all available transactions from worker threads' queues.
   for (auto worker : registered_workers_) {
     TransactionThreadContext *thread_context = worker.second;
     for (auto txn : thread_context->CompletedTransactions()) {

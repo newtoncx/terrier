@@ -108,7 +108,7 @@ class TransactionManager {
   std::unordered_set<timestamp_t> curr_running_txns_;
   mutable common::SpinLatch curr_running_txns_latch_;
 
-  // TODO(ncx): new
+  // Stores per-thread context to allow thread-local latching.
   std::map<worker_id_t, TransactionThreadContext *> registered_workers_;
   mutable common::SpinLatch registered_workers_latch_;
 
